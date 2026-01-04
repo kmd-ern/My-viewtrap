@@ -3,7 +3,7 @@ from googleapiclient.discovery import build
 from datetime import datetime
 
 # ==========================================
-# 👇 API 키 입력 (따옴표 안에 넣으세요)
+# 👇 API 키 (그대로 두세요)
 API_KEY = 'AIzaSyDk-YrjKCiJSnjoSIeSB46yroeZiCCSXWI'
 # ==========================================
 
@@ -32,23 +32,27 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 3. 데이터 저장소 (세션 스테이트 - 기억력 장치)
+# 3. 데이터 저장소
 if 'archive' not in st.session_state:
     st.session_state.archive = []
-
 if 'search_results' not in st.session_state:
-    st.session_state.search_results = [] # 검색 결과도 기억하게 만듦!
+    st.session_state.search_results = []
 
-# 4. 함수: 유튜브 검색
-def search_youtube(keyword):
+# 4. 함수: 유튜브 검색 (옵션 추가됨: order_mode)
+def search_youtube(keyword, order_mode):
     try:
         youtube = build('youtube', 'v3', developerKey=API_KEY)
+        
+        # order_mode에 따라 'viewCount'(조회수순) 또는 'date'(최신순)으로 요청
         search_response = youtube.search().list(
-            q=keyword, part='snippet', maxResults=12, type='video', order='viewCount'
+            q=keyword, part='snippet', maxResults=12, type='video', order=order_mode
         ).execute()
 
         video_ids = [item['id']['videoId'] for item in search_response['items']]
         channel_ids = [item['snippet']['channelId'] for item in search_response['items']]
+
+        if not video_ids:
+            return []
 
         vid_res = youtube.videos().list(part='statistics', id=','.join(video_ids)).execute()
         ch_res = youtube.channels().list(part='statistics', id=','.join(channel_ids)).execute()
@@ -86,91 +90,5 @@ def search_youtube(keyword):
         st.error(f"에러가 발생했습니다: {e}")
         return []
 
-# 5. 화면 구성 (UI)
-st.title("📱 My ViewTrap")
-
-tab1, tab2 = st.tabs(["🔍 영상 찾기", "📚 보관함"])
-
-# [탭 1] 검색 기능
-with tab1:
-    # 폼(Form)을 써야 엔터칠 때 페이지가 새로고침 되는 걸 깔끔하게 처리함
-    with st.form(key='search_form'):
-        col1, col2, col3 = st.columns([4, 1, 1])
-        with col1:
-            query = st.text_input("키워드 검색", placeholder="예: 스마트스토어")
-        with col2:
-            sort_option = st.selectbox("정렬", ["🔥 성과순", "📅 최신순", "👁️ 조회수순"])
-        with col3:
-            st.write("") # 줄맞춤용
-            search_btn = st.form_submit_button("검색 🔍")
-
-    # 검색 버튼을 눌렀을 때만 데이터를 새로 가져옴
-    if search_btn and query:
-        with st.spinner('유튜브 분석 중...'):
-            new_data = search_youtube(query)
-            st.session_state.search_results = new_data # 결과를 기억장치에 저장!
-
-    # 기억된 결과가 있으면 화면에 그리기
-    if st.session_state.search_results:
-        data = st.session_state.search_results
-        
-        # 정렬 로직 (보여줄 때만 정렬)
-        sorted_data = sorted(data, key=lambda x: x['perf'] if sort_option == "🔥 성과순" else (x['date'] if sort_option == "📅 최신순" else x['views']), reverse=True)
-
-        cols = st.columns(3)
-        for idx, video in enumerate(sorted_data):
-            with cols[idx % 3]:
-                # 배지 HTML
-                badges = f'<div class="badge bg-dark">{video["date"]}</div>'
-                if video['is_new']: badges += '<div class="badge bg-green">✨ NEW</div>'
-                if video['perf'] >= 100: badges += f'<div class="badge bg-red">🔥 성과 {int(video["perf"])}%</div>'
-                elif video['perf'] >= 30: badges += f'<div class="badge bg-orange">👍 {int(video["perf"])}%</div>'
-
-                st.markdown(f"""
-                <div class="card">
-                    <div class="thumb-container">
-                        <img src="{video['thumb']}" class="thumb-img">
-                        <div class="badge-overlay">{badges}</div>
-                    </div>
-                    <div class="info">
-                        <a href="{video['url']}" target="_blank" class="title">{video['title']}</a>
-                        <div class="meta"><span>📺 {video['channel']}</span></div>
-                        <div class="meta"><span class="stats">👁️ {video['views']:,}회 / 구독 {video['subs']//1000}k</span></div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                # 저장 버튼 로직 (가장 중요한 수정 부분!)
-                # 이미 저장된 영상인지 ID로 확인
-                is_saved = any(v['id'] == video['id'] for v in st.session_state.archive)
-                
-                if is_saved:
-                    st.button("✅ 저장됨", key=f"saved_{video['id']}", disabled=True)
-                else:
-                    # 버튼을 누르면 -> archive에 추가하고 -> rerun(새로고침)해서 버튼 상태를 '저장됨'으로 바꿈
-                    if st.button("📥 보관함 담기", key=f"btn_{video['id']}"):
-                        st.session_state.archive.append(video)
-                        st.rerun()
-
-# [탭 2] 보관함 기능
-with tab2:
-    st.header(f"내 보관함 ({len(st.session_state.archive)}개)")
-    if len(st.session_state.archive) == 0:
-        st.info("아직 저장된 영상이 없습니다.")
-    else:
-        arch_cols = st.columns(3)
-        for idx, video in enumerate(reversed(st.session_state.archive)):
-            with arch_cols[idx % 3]:
-                st.markdown(f"""
-                <div class="card">
-                    <img src="{video['thumb']}" style="width:100%; aspect-ratio:16/9; object-fit:cover;">
-                    <div style="padding:10px;">
-                        <div style="font-weight:bold; font-size:14px; margin-bottom:5px;">{video['title']}</div>
-                        <div style="font-size:12px; color:#666;">{video['channel']}</div>
-                        <div style="color:red; font-weight:bold;">👁️ {video['views']:,}회</div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                if st.button("🗑️ 삭제", key=f"del_{video['id']}"):
-                    st.session_state.archive.remove(video)
-                    st.rerun()
+# 5. 화면 구성
+st.title("📱 My ViewTrap
