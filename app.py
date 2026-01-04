@@ -7,20 +7,15 @@ from datetime import datetime
 API_KEY = 'AIzaSyDk-YrjKCiJSnjoSIeSB46yroeZiCCSXWI'
 # ==========================================
 
-# 1. 페이지 설정 (탭 이름 등)
+# 1. 페이지 설정
 st.set_page_config(page_title="나만의 뷰트랩", layout="wide")
 
-# 2. 스타일(CSS) - 카드 디자인
+# 2. 스타일(CSS)
 st.markdown("""
 <style>
     .card {
-        background-color: white;
-        border-radius: 10px;
-        padding: 0;
-        margin-bottom: 20px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        border: 1px solid #e0e0e0;
-        overflow: hidden;
+        background-color: white; border-radius: 10px; padding: 0; margin-bottom: 20px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1); border: 1px solid #e0e0e0; overflow: hidden;
     }
     .thumb-container { position: relative; width: 100%; aspect-ratio: 16/9; }
     .thumb-img { width: 100%; height: 100%; object-fit: cover; }
@@ -37,9 +32,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 3. 데이터 저장소 (세션 스테이트 - 웹사이트가 켜져있는 동안 기억함)
+# 3. 데이터 저장소 (세션 스테이트 - 기억력 장치)
 if 'archive' not in st.session_state:
     st.session_state.archive = []
+
+if 'search_results' not in st.session_state:
+    st.session_state.search_results = [] # 검색 결과도 기억하게 만듦!
 
 # 4. 함수: 유튜브 검색
 def search_youtube(keyword):
@@ -52,7 +50,6 @@ def search_youtube(keyword):
         video_ids = [item['id']['videoId'] for item in search_response['items']]
         channel_ids = [item['snippet']['channelId'] for item in search_response['items']]
 
-        # 상세 정보 조회
         vid_res = youtube.videos().list(part='statistics', id=','.join(video_ids)).execute()
         ch_res = youtube.channels().list(part='statistics', id=','.join(channel_ids)).execute()
 
@@ -66,7 +63,6 @@ def search_youtube(keyword):
             subs = ch_subs.get(ch_id, 1)
             pub_date = item['snippet']['publishedAt'][:10]
             
-            # 최신 영상 여부 (30일 이내)
             is_new = False
             try:
                 date_obj = datetime.strptime(pub_date, "%Y-%m-%d")
@@ -93,41 +89,43 @@ def search_youtube(keyword):
 # 5. 화면 구성 (UI)
 st.title("📱 My ViewTrap")
 
-# 탭 만들기
 tab1, tab2 = st.tabs(["🔍 영상 찾기", "📚 보관함"])
 
+# [탭 1] 검색 기능
 with tab1:
-    # 검색창 (엔터키 치면 자동 적용됨)
-    col1, col2 = st.columns([4, 1])
-    with col1:
-        query = st.text_input("키워드 검색", placeholder="예: 스마트스토어, 다이어트")
-    with col2:
-        sort_option = st.selectbox("정렬", ["🔥 성과순", "📅 최신순", "👁️ 조회수순"])
+    # 폼(Form)을 써야 엔터칠 때 페이지가 새로고침 되는 걸 깔끔하게 처리함
+    with st.form(key='search_form'):
+        col1, col2, col3 = st.columns([4, 1, 1])
+        with col1:
+            query = st.text_input("키워드 검색", placeholder="예: 스마트스토어")
+        with col2:
+            sort_option = st.selectbox("정렬", ["🔥 성과순", "📅 최신순", "👁️ 조회수순"])
+        with col3:
+            st.write("") # 줄맞춤용
+            search_btn = st.form_submit_button("검색 🔍")
 
-    if query:
-        # 데이터 가져오기
+    # 검색 버튼을 눌렀을 때만 데이터를 새로 가져옴
+    if search_btn and query:
         with st.spinner('유튜브 분석 중...'):
-            data = search_youtube(query)
+            new_data = search_youtube(query)
+            st.session_state.search_results = new_data # 결과를 기억장치에 저장!
 
-        # 정렬 로직
-        if sort_option == "🔥 성과순":
-            data.sort(key=lambda x: x['perf'], reverse=True)
-        elif sort_option == "📅 최신순":
-            data.sort(key=lambda x: x['date'], reverse=True)
-        else:
-            data.sort(key=lambda x: x['views'], reverse=True)
+    # 기억된 결과가 있으면 화면에 그리기
+    if st.session_state.search_results:
+        data = st.session_state.search_results
+        
+        # 정렬 로직 (보여줄 때만 정렬)
+        sorted_data = sorted(data, key=lambda x: x['perf'] if sort_option == "🔥 성과순" else (x['date'] if sort_option == "📅 최신순" else x['views']), reverse=True)
 
-        # 그리드 형태로 보여주기 (3열)
         cols = st.columns(3)
-        for idx, video in enumerate(data):
+        for idx, video in enumerate(sorted_data):
             with cols[idx % 3]:
-                # 배지 HTML 생성
+                # 배지 HTML
                 badges = f'<div class="badge bg-dark">{video["date"]}</div>'
                 if video['is_new']: badges += '<div class="badge bg-green">✨ NEW</div>'
                 if video['perf'] >= 100: badges += f'<div class="badge bg-red">🔥 성과 {int(video["perf"])}%</div>'
                 elif video['perf'] >= 30: badges += f'<div class="badge bg-orange">👍 {int(video["perf"])}%</div>'
 
-                # 카드 HTML 출력
                 st.markdown(f"""
                 <div class="card">
                     <div class="thumb-container">
@@ -136,36 +134,33 @@ with tab1:
                     </div>
                     <div class="info">
                         <a href="{video['url']}" target="_blank" class="title">{video['title']}</a>
-                        <div class="meta">
-                            <span>📺 {video['channel']} (구독 {video['subs']//1000}k)</span>
-                        </div>
-                        <div class="meta">
-                            <span class="stats">👁️ {video['views']:,}회</span>
-                        </div>
+                        <div class="meta"><span>📺 {video['channel']}</span></div>
+                        <div class="meta"><span class="stats">👁️ {video['views']:,}회 / 구독 {video['subs']//1000}k</span></div>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
 
-                # 저장 버튼 (Streamlit 버튼 사용)
-                # 이미 저장된 건지 확인
+                # 저장 버튼 로직 (가장 중요한 수정 부분!)
+                # 이미 저장된 영상인지 ID로 확인
                 is_saved = any(v['id'] == video['id'] for v in st.session_state.archive)
+                
                 if is_saved:
                     st.button("✅ 저장됨", key=f"saved_{video['id']}", disabled=True)
                 else:
+                    # 버튼을 누르면 -> archive에 추가하고 -> rerun(새로고침)해서 버튼 상태를 '저장됨'으로 바꿈
                     if st.button("📥 보관함 담기", key=f"btn_{video['id']}"):
                         st.session_state.archive.append(video)
-                        st.rerun() # 화면 새로고침해서 버튼 상태 업데이트
+                        st.rerun()
 
+# [탭 2] 보관함 기능
 with tab2:
     st.header(f"내 보관함 ({len(st.session_state.archive)}개)")
     if len(st.session_state.archive) == 0:
-        st.info("아직 저장된 영상이 없습니다. 검색 탭에서 영상을 담아보세요!")
+        st.info("아직 저장된 영상이 없습니다.")
     else:
-        # 보관함 그리드
         arch_cols = st.columns(3)
-        for idx, video in enumerate(reversed(st.session_state.archive)): # 최신 저장순
+        for idx, video in enumerate(reversed(st.session_state.archive)):
             with arch_cols[idx % 3]:
-                # (위와 동일한 카드 디자인 - 간략화)
                 st.markdown(f"""
                 <div class="card">
                     <img src="{video['thumb']}" style="width:100%; aspect-ratio:16/9; object-fit:cover;">
@@ -176,7 +171,6 @@ with tab2:
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
-                # 삭제 버튼 (선택 사항)
                 if st.button("🗑️ 삭제", key=f"del_{video['id']}"):
                     st.session_state.archive.remove(video)
                     st.rerun()
